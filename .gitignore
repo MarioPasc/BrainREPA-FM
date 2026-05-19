@@ -1,0 +1,34 @@
+prompts
+
+# Python build / caches
+*.egg-info/
+*.egg
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual envs / build outputs
+build/
+dist/
+.venv/
+env/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor noise
+.idea/
+.vscode/
+*.swp
+
+# Project artifacts (large, regenerable)
+artifacts/preflights/*/2*/
+artifacts/preflights/*/LATEST

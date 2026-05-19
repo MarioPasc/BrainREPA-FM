@@ -1,0 +1,12 @@
+# Default pre-flight 01 config — 50 training subjects, full 219 challenge-val for KS.
+# Target wall-clock on local RTX 3060 (12 GB): ~6-8 hours.
+source_h5: /media/mpascual/MeningD2/INPAINTING/2026/h5/brats_inpainting_2026.h5
+output_root: artifacts/preflights/augmentation
+n_train_subjects: 50
+n_val_subjects: 219
+stratify_by: tumor_volume_quartile
+target_shape: "3060"
+device: cuda
+seed: 2026
+n_figure_subjects: 2
+log_level: INFO

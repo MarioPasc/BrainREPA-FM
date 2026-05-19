@@ -1,0 +1,11 @@
+# Smoke config: 4 training subjects + 4 challenge-val, runs in < 5 min on RTX 3060.
+source_h5: /tmp/brats_smoke.h5
+output_root: /tmp/brainrepa_aug_smoke
+n_train_subjects: 4
+n_val_subjects: 4
+stratify_by: random
+target_shape: "3060"
+device: cuda
+seed: 0
+n_figure_subjects: 2
+log_level: INFO

@@ -1,0 +1,19 @@
+# Full BraTS-2026 NIfTI -> H5 conversion (1,251 training + 219 challenge-val).
+# Output ~ tens of GB; ensure /media/mpascual/MeningD2 has room before running.
+
+training_root: /media/mpascual/MeningD2/INPAINTING/2026/source/ASNR-MICCAI-BraTS2023-Local-Synthesis-Challenge-Training
+challenge_val_root: /media/mpascual/MeningD2/INPAINTING/2026/source/ASNR-MICCAI-BraTS2023-Local-Synthesis-Challenge-Validation
+output_path: /media/mpascual/MeningD2/INPAINTING/2026/h5/brats_inpainting_2026.h5
+
+# Patient-level 80/10/10 split over the training pool. Seed pinned for reproducibility.
+partition_fractions: [0.8, 0.1, 0.1]
+partition_seed: 2026
+
+# Intensity normalization: 5th-99.5th percentile clip inside (brain & ~void), then min-max -> [0, 1].
+percentile_low: 5.0
+percentile_high: 99.5
+
+# Storage policy: gzip level 4 per H5 design principle §6.
+gzip_level: 4
+
+log_level: INFO

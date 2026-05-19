@@ -1,0 +1,19 @@
+# Smoke conversion: 8 training + 4 challenge-val subjects, output to /tmp.
+# Used by tests/data/test_brats2026_converter.py and the smoke pytest marker.
+# Wall-clock target: < 60 s.
+
+training_root: /media/mpascual/MeningD2/INPAINTING/2026/source/ASNR-MICCAI-BraTS2023-Local-Synthesis-Challenge-Training
+challenge_val_root: /media/mpascual/MeningD2/INPAINTING/2026/source/ASNR-MICCAI-BraTS2023-Local-Synthesis-Challenge-Validation
+output_path: /tmp/brats_smoke.h5
+
+max_subjects_training: 8
+max_subjects_challenge_val: 4
+
+partition_fractions: [0.5, 0.25, 0.25]
+partition_seed: 0
+
+percentile_low: 5.0
+percentile_high: 99.5
+gzip_level: 4
+
+log_level: INFO
