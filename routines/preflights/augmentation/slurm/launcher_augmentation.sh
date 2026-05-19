@@ -18,6 +18,17 @@ CONDA_ENV_NAME="${CONDA_ENV_NAME:-brainrepa}"
 LOGS_DIR="${LOGS_DIR:-${HOME}/execs/brainrepa_fm/logs}"
 mkdir -p "${LOGS_DIR}"
 
+# ---- Activate the project conda env on the login node -----------------------
+# The launcher itself runs python (for YAML path validation); the login node's
+# (base) env lacks PyYAML, so activate brainrepa first.
+if command -v conda >/dev/null 2>&1; then
+    source "$(conda info --base)/etc/profile.d/conda.sh" 2>/dev/null || true
+    conda activate "${CONDA_ENV_NAME}" 2>/dev/null \
+        || echo "[launcher] WARNING: could not activate conda env '${CONDA_ENV_NAME}'." >&2
+else
+    echo "[launcher] WARNING: conda not on PATH; YAML validation may fail." >&2
+fi
+
 # ---- Args -------------------------------------------------------------------
 DRY_RUN=false
 CONFIG_PATH=""
