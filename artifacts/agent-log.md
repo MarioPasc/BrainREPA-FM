@@ -50,6 +50,17 @@
 4. **Pre-flight 02 (BSF layers)** and **pre-flight 03 (MAISI VAE audit)** — both consume `src/brainrepa_fm/common/maisi.py` as-is.
 5. **Picasso submission.** SLURM scripts exist at `routines/preflights/augmentation/slurm/`. The Singularity image path is a placeholder (`$SINGULARITY_IMG`) — update to the current NGC PyTorch image on Picasso before submission.
 
+## Hand-off state at 2026-05-19T22:00Z
+
+- Commit `27fe0ab` on `main` carries the full implementation (66 files, 6,134 insertions).
+- Full source-H5 conversion is **running in the background** (PID 61874, log at `/tmp/brats_conversion.log`, target `/media/mpascual/MeningD2/INPAINTING/2026/h5/brats_inpainting_2026.h5`). ETA ≈ 1 hour at the observed throughput (25 scans / 60 s). At completion, the converter atomic-renames the `.partial` file and `assert_brats2026_valid` runs.
+- Once the H5 exists, run:
+  ```bash
+  ~/.conda/envs/brainrepa/bin/python -m routines.preflights.augmentation.cli \
+      routines/preflights/augmentation/configs/default.yaml
+  ```
+  ETA ≈ 6-8 hours on the 3060 (50 train × 8 transforms ≈ 400 VAE round-trips at ~10 s each + 16 QC figures + 4 KS CDFs).
+
 ## Resources used
 
 - Subagents: 3 Explore agents at planning time (proposal/checks digest, repo state map, MAISI/sampler upstream code).
