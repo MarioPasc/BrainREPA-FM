@@ -16,17 +16,6 @@ CONDA_ENV_NAME="${CONDA_ENV_NAME:-brainrepa}"
 LOGS_DIR="${LOGS_DIR:-${HOME}/execs/brainrepa_fm/logs}"
 mkdir -p "${LOGS_DIR}"
 
-# ---- Activate the project conda env on the login node -----------------------
-# The launcher runs python for YAML path validation; activate brainrepa so
-# PyYAML is importable (the login node's base env lacks it).
-if command -v conda >/dev/null 2>&1; then
-    source "$(conda info --base)/etc/profile.d/conda.sh" 2>/dev/null || true
-    conda activate "${CONDA_ENV_NAME}" 2>/dev/null \
-        || echo "[launcher] WARNING: could not activate conda env '${CONDA_ENV_NAME}'." >&2
-else
-    echo "[launcher] WARNING: conda not on PATH; YAML validation may fail." >&2
-fi
-
 DRY_RUN=false
 CONFIG_PATH=""
 for arg in "$@"; do
@@ -53,34 +42,38 @@ for path in "${REPO_DIR}" "${CONFIG_PATH}"; do
     fi
 done
 
-_validate_yaml_paths() {
-    local cfg="$1"
-    python - "$cfg" <<'PYEOF'
-import sys, yaml
-from pathlib import Path
-cfg_path = Path(sys.argv[1])
-with cfg_path.open() as f:
-    cfg = yaml.safe_load(f) or {}
-missing = []
-for key in ("source_h5", "maisi_checkpoint_path", "maisi_config_path"):
-    val = cfg.get(key)
-    if val is None:
-        if key == "source_h5":
-            missing.append(f"{key}: not set in {cfg_path}")
-        continue
-    if not Path(val).exists():
-        missing.append(f"{key}: missing on filesystem: {val}")
-if missing:
-    print("[FATAL] required artifact paths missing on Picasso:", file=sys.stderr)
-    for m in missing:
-        print(f"  - {m}", file=sys.stderr)
-    sys.exit(1)
-print("[launcher] YAML paths validated.")
-PYEOF
+# Pure-bash top-level scalar extraction from a flat YAML file (no python dependency).
+_yaml_get() {
+    local file="$1" key="$2"
+    grep -E "^[[:space:]]*${key}[[:space:]]*:" "${file}" 2>/dev/null \
+        | head -1 \
+        | sed -E "s/^[[:space:]]*${key}[[:space:]]*:[[:space:]]*//; s/[[:space:]]*#.*$//; s/[[:space:]]+$//; s/^[\"']//; s/[\"']$//"
 }
-if command -v python >/dev/null 2>&1; then
-    _validate_yaml_paths "${CONFIG_PATH}" || exit 1
-fi
+
+_validate_yaml_paths() {
+    local cfg="$1" key val fatal=0
+    for key in source_h5 maisi_checkpoint_path maisi_config_path; do
+        val="$(_yaml_get "${cfg}" "${key}")"
+        if [[ -z "${val}" || "${val}" == "null" ]]; then
+            if [[ "${key}" == "source_h5" ]]; then
+                echo "[FATAL] '${key}' is not set in ${cfg}" >&2
+                fatal=1
+            fi
+            continue
+        fi
+        if [[ ! -e "${val}" ]]; then
+            echo "[FATAL] '${key}' points at a missing path: ${val}" >&2
+            fatal=1
+        fi
+    done
+    if [[ ${fatal} -ne 0 ]]; then
+        echo "[hint] fix the path in ${cfg} or rsync the missing artifact in." >&2
+        return 1
+    fi
+    echo "[launcher] YAML paths validated."
+    return 0
+}
+_validate_yaml_paths "${CONFIG_PATH}" || exit 1
 
 JOB_NAME="brainrepa-encode-latents-$(date -u +%Y%m%dT%H%M%SZ)"
 

@@ -55,6 +55,19 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 
 echo "[env] python: $(which python)"
 python --version
+
+# BrainREPA-FM uses Python 3.10+ syntax. Fail fast with a clear message otherwise.
+python -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 10) else 1)' || {
+    echo "[FATAL] conda env '${CONDA_ENV_NAME}' has $(python --version 2>&1)." >&2
+    echo "[FATAL] BrainREPA-FM requires Python >= 3.10." >&2
+    echo "[hint]  recreate the env on Picasso:" >&2
+    echo "        conda create -n brainrepa python=3.11 -y" >&2
+    echo "        conda activate brainrepa" >&2
+    echo "        pip install --extra-index-url https://download.pytorch.org/whl/cu121 torch torchvision" >&2
+    echo "        pip install -e '${REPO_DIR}'" >&2
+    exit 1
+}
+
 python -c "import torch; print(f'[env] torch={torch.__version__}, cuda={torch.cuda.is_available()}')"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader || true
 echo ""

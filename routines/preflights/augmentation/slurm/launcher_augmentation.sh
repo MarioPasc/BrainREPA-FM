@@ -18,17 +18,6 @@ CONDA_ENV_NAME="${CONDA_ENV_NAME:-brainrepa}"
 LOGS_DIR="${LOGS_DIR:-${HOME}/execs/brainrepa_fm/logs}"
 mkdir -p "${LOGS_DIR}"
 
-# ---- Activate the project conda env on the login node -----------------------
-# The launcher itself runs python (for YAML path validation); the login node's
-# (base) env lacks PyYAML, so activate brainrepa first.
-if command -v conda >/dev/null 2>&1; then
-    source "$(conda info --base)/etc/profile.d/conda.sh" 2>/dev/null || true
-    conda activate "${CONDA_ENV_NAME}" 2>/dev/null \
-        || echo "[launcher] WARNING: could not activate conda env '${CONDA_ENV_NAME}'." >&2
-else
-    echo "[launcher] WARNING: conda not on PATH; YAML validation may fail." >&2
-fi
-
 # ---- Args -------------------------------------------------------------------
 DRY_RUN=false
 CONFIG_PATH=""
@@ -57,39 +46,41 @@ for path in "${REPO_DIR}" "${CONFIG_PATH}"; do
     fi
 done
 
-# Extract the source_h5, maisi_checkpoint_path, maisi_config_path from the YAML and verify each.
-# Use python (any conda env with PyYAML works on the login node).
-_validate_yaml_paths() {
-    local cfg="$1"
-    python - "$cfg" <<'PYEOF'
-import sys, yaml
-from pathlib import Path
-cfg_path = Path(sys.argv[1])
-with cfg_path.open() as f:
-    cfg = yaml.safe_load(f) or {}
-missing = []
-for key in ("source_h5", "maisi_checkpoint_path", "maisi_config_path"):
-    val = cfg.get(key)
-    if val is None:
-        # maisi_* are optional; only flag source_h5 if absent
-        if key == "source_h5":
-            missing.append(f"{key}: not set in {cfg_path}")
-        continue
-    if not Path(val).exists():
-        missing.append(f"{key}: missing on filesystem: {val}")
-if missing:
-    print("[FATAL] required artifact paths missing on Picasso:", file=sys.stderr)
-    for m in missing:
-        print(f"  - {m}", file=sys.stderr)
-    sys.exit(1)
-print("[launcher] YAML paths validated.")
-PYEOF
+# Extract a top-level scalar from a flat YAML file. Pure bash — no python, no
+# PyYAML — so the launcher works regardless of which interpreter is on PATH.
+# Handles optional surrounding whitespace, quotes, and trailing '# comment'.
+_yaml_get() {
+    local file="$1" key="$2"
+    grep -E "^[[:space:]]*${key}[[:space:]]*:" "${file}" 2>/dev/null \
+        | head -1 \
+        | sed -E "s/^[[:space:]]*${key}[[:space:]]*:[[:space:]]*//; s/[[:space:]]*#.*$//; s/[[:space:]]+$//; s/^[\"']//; s/[\"']$//"
 }
-if command -v python >/dev/null 2>&1; then
-    _validate_yaml_paths "${CONFIG_PATH}" || exit 1
-else
-    echo "[launcher] WARNING: no python on PATH at launcher time; skipping YAML path validation." >&2
-fi
+
+# Verify the dataset + MAISI paths declared in the YAML exist on this filesystem.
+_validate_yaml_paths() {
+    local cfg="$1" key val fatal=0
+    for key in source_h5 maisi_checkpoint_path maisi_config_path; do
+        val="$(_yaml_get "${cfg}" "${key}")"
+        if [[ -z "${val}" || "${val}" == "null" ]]; then
+            if [[ "${key}" == "source_h5" ]]; then
+                echo "[FATAL] '${key}' is not set in ${cfg}" >&2
+                fatal=1
+            fi
+            continue
+        fi
+        if [[ ! -e "${val}" ]]; then
+            echo "[FATAL] '${key}' points at a missing path: ${val}" >&2
+            fatal=1
+        fi
+    done
+    if [[ ${fatal} -ne 0 ]]; then
+        echo "[hint] fix the path in ${cfg} or rsync the missing artifact in." >&2
+        return 1
+    fi
+    echo "[launcher] YAML paths validated."
+    return 0
+}
+_validate_yaml_paths "${CONFIG_PATH}" || exit 1
 
 # ---- Job name with timestamp suffix -----------------------------------------
 JOB_NAME="brainrepa-preflight-aug-$(date -u +%Y%m%dT%H%M%SZ)"
