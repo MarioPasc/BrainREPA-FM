@@ -82,6 +82,7 @@ docs = []
 # ----------------------------------------------------------------------------
 [project.scripts]
 brainrepa-data-brats2026-convert = "routines.data.brats2026_convert.cli:main"
+brainrepa-data-encode-latents    = "routines.data.encode_latents.cli:main"
 brainrepa-preflight-augmentation = "routines.preflights.augmentation.cli:main"
 # brainrepa-preflight-maisi-vae    = "routines.preflights.maisi_vae.cli:main"
 # brainrepa-preflight-bsf-layers   = "routines.preflights.bsf_layers.cli:main"

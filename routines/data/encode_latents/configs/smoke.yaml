@@ -1,0 +1,8 @@
+# Smoke encoder: 1 scan, output to /tmp. Verifies the full encode + validate pipeline.
+source_h5: /tmp/brats_smoke.h5
+output_path: /tmp/brainrepa_latents_smoke.h5
+target_shape: "3060"
+max_subjects: 1
+device: cuda
+gzip_level: 4
+log_level: INFO

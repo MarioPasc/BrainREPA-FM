@@ -20,6 +20,7 @@ from brainrepa_fm.data.h5_schemas import LATENTS_SCHEMA_VERSION
 
 def _build_tiny_latents(path: Path) -> None:
     n = 3
+    n_with_gt = 2  # scans 0, 1 carry GT; scan 2 is challenge_val
     c, lz, ly, lx = 4, 48, 48, 36
     with h5py.File(path, "w") as f:
         f.attrs["schema_version"] = LATENTS_SCHEMA_VERSION
@@ -28,6 +29,7 @@ def _build_tiny_latents(path: Path) -> None:
         f.attrs["config_json"] = json.dumps({"seed": 0})
         f.attrs["git_sha"] = "deadbeef"
         f.attrs["n_scans"] = n
+        f.attrs["n_with_gt"] = n_with_gt
         f.attrs["latent_stats_calibrated"] = False
         f.attrs["vae_checkpoint_sha256"] = "b5ed556dc64872ca"
         f.attrs["vae_scale_factor"] = 1.0
@@ -43,7 +45,13 @@ def _build_tiny_latents(path: Path) -> None:
         f.create_dataset(
             "split", data=np.array(["train", "val", "challenge_val"], dtype=object), dtype=vlen
         )
-        f.create_dataset("latents/anchor", data=np.zeros((n, c, lz, ly, lx), dtype=np.float32))
+        f.create_dataset(
+            "latents/voided_anchor", data=np.zeros((n, c, lz, ly, lx), dtype=np.float32)
+        )
+        f.create_dataset(
+            "latents/gt_anchor", data=np.zeros((n_with_gt, c, lz, ly, lx), dtype=np.float32)
+        )
+        f.create_dataset("gt/scan_index", data=np.array([0, 1], dtype=np.int32))
         # CSR: 1 view per scan (just for testing).
         f.create_dataset(
             "latents/augmented/values", data=np.zeros((n, c, lz, ly, lx), dtype=np.float32)

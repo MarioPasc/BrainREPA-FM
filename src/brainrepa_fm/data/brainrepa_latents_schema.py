@@ -207,30 +207,76 @@ def validate_brainrepa_latents(path: str | Path) -> list[str]:
             return violations
         n_scans = int(f["scan_id"].shape[0])
 
-        # 3. latents/anchor trailing shape (C, Lz, Ly, Lx)
-        if "latents/anchor" in f:
-            anchor = f["latents/anchor"]
+        # 3. Two anchor latents: voided (n_scans) and gt (n_with_gt sparse).
+        expected_spatial: tuple[int, ...] | None = None
+        if "latent_spatial_shape" in f.attrs:
+            try:
+                shape_list = json.loads(f.attrs["latent_spatial_shape"])
+                expected_spatial = tuple(shape_list)
+            except (TypeError, ValueError):
+                expected_spatial = None
+
+        for name, expected_lead in (
+            ("latents/voided_anchor", n_scans),
+            ("latents/gt_anchor", None),  # gt_anchor leading dim is n_with_gt, checked separately
+        ):
+            if name not in f:
+                violations.append(f"required dataset '{name}' missing")
+                continue
+            anchor = f[name]
             if anchor.ndim != 5:
                 violations.append(
-                    f"latents/anchor: expected 5-D (N, C, Lz, Ly, Lx), got shape {anchor.shape}"
+                    f"{name}: expected 5-D (N, C, Lz, Ly, Lx), got shape {anchor.shape}"
                 )
-            elif anchor.shape[0] != n_scans:
+                continue
+            if expected_lead is not None and anchor.shape[0] != expected_lead:
                 violations.append(
-                    f"latents/anchor.shape[0] = {anchor.shape[0]} disagrees with n_scans = {n_scans}"
+                    f"{name}.shape[0] = {anchor.shape[0]} disagrees with n_scans = {expected_lead}"
                 )
-            elif "latent_spatial_shape" in f.attrs:
-                try:
-                    expected_spatial = tuple(json.loads(f.attrs["latent_spatial_shape"]))
-                    if tuple(anchor.shape[2:]) != expected_spatial:
+            if expected_spatial is not None and tuple(anchor.shape[2:]) != expected_spatial:
+                violations.append(
+                    f"{name} trailing spatial shape {tuple(anchor.shape[2:])} "
+                    f"!= 'latent_spatial_shape' attr {expected_spatial}"
+                )
+
+        # gt_anchor must be paired with gt/scan_index of matching length.
+        if "latents/gt_anchor" in f:
+            n_gt = int(f["latents/gt_anchor"].shape[0])
+            if "gt/scan_index" not in f:
+                violations.append(
+                    "required dataset 'gt/scan_index' missing (paired with latents/gt_anchor)"
+                )
+            else:
+                scan_index = f["gt/scan_index"][...]
+                if scan_index.dtype != np.int32:
+                    violations.append(f"gt/scan_index: expected int32, got {scan_index.dtype}")
+                if scan_index.shape[0] != n_gt:
+                    violations.append(
+                        f"gt/scan_index.shape[0] = {scan_index.shape[0]} disagrees with "
+                        f"latents/gt_anchor.shape[0] = {n_gt}"
+                    )
+                if n_gt > 0:
+                    if scan_index.min() < 0 or scan_index.max() >= n_scans:
                         violations.append(
-                            f"latents/anchor trailing spatial shape {tuple(anchor.shape[2:])} "
-                            f"!= 'latent_spatial_shape' attr {expected_spatial}"
+                            f"gt/scan_index: indices must be in [0, {n_scans}); "
+                            f"got [{scan_index.min()}, {scan_index.max()}]"
                         )
-                except (TypeError, ValueError):
-                    # Already reported above.
-                    pass
-        else:
-            violations.append("required dataset 'latents/anchor' missing")
+                    if len(set(scan_index.tolist())) != n_gt:
+                        violations.append("gt/scan_index: indices must be unique")
+                    if "splits/challenge_val" in f:
+                        chal = set(f["splits/challenge_val"][...].tolist())
+                        leaks = sorted(set(scan_index.tolist()) & chal)
+                        if leaks:
+                            violations.append(
+                                f"gt/scan_index leaks {len(leaks)} challenge_val indices "
+                                f"(first few: {leaks[:5]})"
+                            )
+
+            if "n_with_gt" in f.attrs and int(f.attrs["n_with_gt"]) != n_gt:
+                violations.append(
+                    f"root attr 'n_with_gt' = {int(f.attrs['n_with_gt'])} disagrees with "
+                    f"latents/gt_anchor.shape[0] = {n_gt}"
+                )
 
         # 4. CSR invariants
         violations.extend(_check_csr_invariants(f, n_scans))

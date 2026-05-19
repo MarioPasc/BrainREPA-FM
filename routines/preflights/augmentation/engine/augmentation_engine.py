@@ -84,8 +84,8 @@ class AugmentationRoutineConfig(BaseModel):
 
     source_h5: Path
     output_root: Path = Path("artifacts/preflights/augmentation")
-    n_train_subjects: int = Field(default=50, ge=2)
-    n_val_subjects: int = Field(default=219, ge=2)
+    n_train_subjects: int = Field(default=50, ge=1)
+    n_val_subjects: int = Field(default=219, ge=1)
     stratify_by: Literal["random", "tumor_volume_quartile"] = "tumor_volume_quartile"
     target_shape: Literal["3060", "a100"] = "3060"
     device: str = "cuda"
@@ -397,9 +397,11 @@ class AugmentationEngine:
                 # We only audit void-mask transforms here; intensity transforms keep the void.
                 if transform.kind == "void_mask":
                     if transform.id == "A.3":
+                        # Draw donor from the FULL train pool, not the audit subset — the subset
+                        # can be as small as 1 and would leave the donor pool empty after exclusion.
                         donor = self._pick_donor_tumor(
                             f,
-                            np.asarray([int(s) for s in train_subset], dtype=int),
+                            f["splits/train"][...].astype(int),
                             exclude=int(scan_idx),
                             seed=seed,
                             global_to_gt={int(g): i for i, g in enumerate(f["gt/scan_index"][...])},

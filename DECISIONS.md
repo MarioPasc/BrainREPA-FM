@@ -38,6 +38,27 @@ Status updates edit the original entry's status line. Entries are never deleted.
 **Consequences:** Supervised metrics during training/eval use the local `val` and `test` slices. The `challenge_val` slice is reserved for the leaderboard submission flow only — no supervised loss can be computed on it (no tumor GT, void already fixed). Re-running the converter with a different seed produces a new H5 (artifacts are immutable per `.claude/rules/preflight-pattern.md`).
 **Status:** accepted
 
+## 2026-05-19 — Schema B carries two anchor latents (voided + gt), not one
+
+**Context:** The original Schema B had a single `latents/anchor` dataset. The FM training objective in the proposal (SD-Inpainting-style flow matching) requires BOTH the conditioning latent `z̃ = E(t1_voided)` (model input) AND the supervision latent `z₀ = E(gt_t1)` (training target). Encoding `gt_t1` on the fly each training iteration burns ~4 s of GPU time per sample.
+**Decision:** Extend Schema B with `latents/voided_anchor` (`float32 (n_scans, C, Lz, Ly, Lx)`, always present) and `latents/gt_anchor` (sparse, `(n_with_gt, C, Lz, Ly, Lx)`, indexed by `gt/scan_index`). Add the `n_with_gt` root attr. Update the validator to check both, enforce the sparse leading-dim invariant on `gt_anchor`, and assert `gt/scan_index` is disjoint from `splits/challenge_val`. Augmented latents stay CSR-style, applied to the voided path (apply transform → re-void → encode).
+**Consequences:** ~2× storage for Schema B at the training pool (1,251 × 2 = 2,502 latents at ~5 MB each = ~12.5 GB) but ~4 s × millions of training iterations saved at FM time. Cleaner partitioning between inference-only (`challenge_val`) and training (`train`/`val`/`test`).
+**Status:** accepted
+
+## 2026-05-19 — Latent encoder routine `routines/data/encode_latents`
+
+**Context:** Pre-flight 01 audits the augmentation set; the FM training loop wants pre-encoded latents to avoid re-encoding the same volume thousands of times. A dedicated producer was needed.
+**Decision:** Add `src/brainrepa_fm/data/latent_encoder.py::LatentEncoder` + `routines/data/encode_latents/{cli, configs/{default,smoke}, engine/encoder_engine}.py` + console script `brainrepa-data-encode-latents`. Streams Schema A → Schema B scan-by-scan, encodes voided + gt anchors, writes empty CSR-augmented placeholders (to be filled after pre-flight 01's `include` set is finalized). Atomic `.partial` + `assert_brainrepa_latents_valid` on close.
+**Consequences:** The default config encodes the full 1,470 + 1,251 = 2,721 passes (~7-8 h on the 3060 at the 192³ envelope, ~3 h on an A100 at the 256³ envelope). Smoke verified on 1 scan in ~3 s.
+**Status:** accepted
+
+## 2026-05-19 — `n_train_subjects` allowed down to 1 (was 2)
+
+**Context:** The user asked for a 1-scan augmentation preflight smoke. Pydantic field validator rejected `n_train_subjects = 1` with `ge=2`.
+**Decision:** Relax `AugmentationRoutineConfig.n_train_subjects` and `.n_val_subjects` to `ge=1`. Also fix the donor-pool selection in `_collect_mask_descriptors` to draw from the full `splits/train` (not the audit subset), so n=1 doesn't drain the donor pool.
+**Consequences:** 1-scan smokes complete in ~3.5 min on the 3060 with all deliverables; KS test still trips hard-fail at N=1 (~3 samples) by design — that is the intended safety behaviour.
+**Status:** accepted
+
 ## 2026-05-19 — A.2 / A.3 use a simplified geometric sampler, not the verbatim BraTS sampler
 
 **Context:** The user approved "re-invoke the sampler at preflight time (Recommended)" — vendor `getHealthyMasks` from `docs/2026_challenge/dataset/include.py` and call it with widen=1.5. Inspection shows the official sampler depends on a multi-stage pandas/scipy pipeline (`process_getHealthyMasks` → `sampleLocation` → `sampleCompartment` → tumor-compartment pool indexing) totalling several hundred lines. A faithful vendoring also pulls the BraTS distance-transform conventions and segmentation-mask conventions. Scope for this sprint was tight.

@@ -286,7 +286,16 @@ LATENTS_ROOT_ATTRS: tuple[AttrSpec, ...] = (
     AttrSpec("producer", "str", "Producer identifier."),
     AttrSpec("config_json", "str", "JSON-encoded producer config."),
     AttrSpec("git_sha", "str", "Git commit SHA."),
-    AttrSpec("n_scans", "int", "Total number of scans (== leading dimension of latents/anchor)."),
+    AttrSpec(
+        "n_scans",
+        "int",
+        "Total number of scans (== leading dimension of latents/voided_anchor).",
+    ),
+    AttrSpec(
+        "n_with_gt",
+        "int",
+        "Number of scans with ground-truth T1 (training pool; == leading dim of latents/gt_anchor).",
+    ),
     AttrSpec(
         "latent_stats_calibrated",
         "bool",
@@ -324,23 +333,44 @@ LATENTS_DATASETS: tuple[DatasetSpec, ...] = (
     DatasetSpec(
         "split", "vlen-str", None, "tag", "Split assignment, mirroring Schema A.", "n_scans"
     ),
-    # Anchor latent (no augmentation): leading dim = n_scans, trailing shape pinned at H5 creation.
+    # Two anchor latents — voided (model input) and gt (training supervision target).
+    # Trailing shapes are pinned at producer-creation time from an empirical MAISI probe.
     DatasetSpec(
-        "latents/anchor",
+        "latents/voided_anchor",
         "float32",
-        None,  # trailing shape pinned dynamically (e.g. (4, 64, 64, 48) or (4, 32, 32, 24))
+        None,
         "dimensionless",
-        "Anchor latent z_mu * scale_factor for the no-augmentation pass. Trailing shape (C, Lz, Ly, Lx) "
-        "is set at producer-creation time from the empirical MAISI probe.",
+        "Anchor latent of the voided T1 (= E(t1_voided) * scale_factor). The FM model's conditioning input z̃. "
+        "Trailing shape is (C, Lz, Ly, Lx).",
         "n_scans",
     ),
-    # CSR-style augmented latents (H5 principle §8): variable views per scan.
+    DatasetSpec(
+        "latents/gt_anchor",
+        "float32",
+        None,
+        "dimensionless",
+        "Anchor latent of the ground-truth T1 (= E(gt/t1) * scale_factor). The FM training target z₀. "
+        "Sparse: only rows that carry GT in Schema A (training pool). Index into scan_id via gt/scan_index.",
+        "n_with_gt",
+    ),
+    # Pointer back to scan_id for the sparse gt_anchor rows.
+    DatasetSpec(
+        "gt/scan_index",
+        "int32",
+        None,
+        "index",
+        "Indices into scan_id of the rows holding latents/gt_anchor (mirrors Schema A gt/scan_index).",
+        "n_with_gt",
+    ),
+    # CSR-style augmented latents (H5 principle §8): variable views per scan, variants of the
+    # *voided* path (apply transform → re-void → encode).
     DatasetSpec(
         "latents/augmented/values",
         "float32",
         None,
         "dimensionless",
-        "Concatenation of per-augmentation latents across all scans (CSR-style). Trailing shape matches latents/anchor.",
+        "Concatenation of per-augmentation voided latents across all scans (CSR-style). "
+        "Trailing shape matches latents/voided_anchor.",
         "n_aug_rows",
     ),
     DatasetSpec(

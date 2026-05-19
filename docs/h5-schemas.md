@@ -86,6 +86,7 @@ In addition to Schema A's standard attrs (`schema_version`, `created_at`, `produ
 
 | Attr | Type | Description |
 |---|---|---|
+| `n_with_gt` | int | Number of scans carrying a ground-truth T1 (== leading dim of `latents/gt_anchor`). |
 | `latent_stats_calibrated` | bool | False at first write; True once pre-flight 03 populates `latent_scale` / `latent_mean`. |
 | `vae_checkpoint_sha256` | str | First 16 chars of the SHA-256 of `autoencoder_v2.pt`. |
 | `vae_scale_factor` | float | Scalar multiplier applied on encode (and divider on decode). |
@@ -99,14 +100,18 @@ In addition to Schema A's standard attrs (`schema_version`, `created_at`, `produ
 |---|---|---|---|
 | `scan_id` | vlen-str | — | Mirror of Schema A `scan_id` ordering. |
 | `split` | vlen-str | — | Mirror. |
-| `latents/anchor` | float32 | `(C, Lz, Ly, Lx)` | Anchor latent `z_mu * scale_factor` for the no-augmentation pass. |
-| `latents/augmented/values` | float32 | `(C, Lz, Ly, Lx)` | CSR-stacked per-augmentation latents. Leading dim = `n_aug_rows`. |
+| `latents/voided_anchor` | float32 | `(C, Lz, Ly, Lx)` | Encoded `images/t1_voided` (= FM model input z̃). Always present, leading dim = `n_scans`. |
+| `latents/gt_anchor` | float32 | `(C, Lz, Ly, Lx)` | Encoded `gt/t1` (= FM training target z₀). Sparse, leading dim = `n_with_gt`. |
+| `gt/scan_index` | int32 | — | Pointers into `scan_id` for the rows in `latents/gt_anchor`. Disjoint from `splits/challenge_val`. |
+| `latents/augmented/values` | float32 | `(C, Lz, Ly, Lx)` | CSR-stacked per-augmentation voided latents. Leading dim = `n_aug_rows`. |
 | `latents/augmented/offsets` | int32 | — | Shape `(n_scans + 1,)`. Row range for scan i is `[offsets[i], offsets[i+1])`. |
 | `latents/augmented/augmentation_ids` | vlen-str | — | Transform IDs in CSR order. |
 | `augmentations/include` | vlen-str | — | Mirror of pre-flight 01's `decision.json::include`. |
 | `latent_scale` | float32 | `(4,)` | Per-channel std for FM standardization. Zeros placeholder until calibrated. |
 | `latent_mean` | float32 | `(4,)` | Per-channel mean. Zeros placeholder until calibrated. |
 | `splits/{train,val,test,challenge_val}` | int32 | — | Same partition as Schema A. |
+
+The two anchors mirror the SD-Inpainting / flow-matching formulation in the proposal: at training time the FM generator sees the conditioning `z̃ = latents/voided_anchor[i]` and learns to recover `z₀ = latents/gt_anchor[gt_to_global_inverse[i]]` along a stochastic interpolation. At inference time only `z̃` is needed, so `challenge_val` rows carry only `voided_anchor`.
 
 ### Cross-field invariants enforced by `validate_brainrepa_latents`
 

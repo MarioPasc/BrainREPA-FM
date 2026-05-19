@@ -1,0 +1,11 @@
+# Encode the full 1,470-scan source H5 into Schema B.
+# RTX 3060 path: ~10 s per voided + ~10 s per gt pass; 1,470 + 1,251 ≈ 2,721 passes ≈ 7.5 h.
+# A100 path (target_shape: "a100"): ~3-4 s per pass; ~3 h.
+
+source_h5: /media/mpascual/MeningD2/INPAINTING/2026/h5/brats_inpainting_2026.h5
+output_path: /media/mpascual/MeningD2/INPAINTING/2026/h5/brainrepa_latents.h5
+target_shape: "3060"
+max_subjects: null
+device: cuda
+gzip_level: 4
+log_level: INFO
