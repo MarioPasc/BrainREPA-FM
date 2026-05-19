@@ -1,24 +1,21 @@
 #!/usr/bin/env bash
-# Submit the BraTS-2026 augmentation pre-flight to Picasso.
+# Submit the Schema-A -> Schema-B latent encoder to Picasso.
 #
 # Usage (login node):
-#   bash routines/preflights/augmentation/slurm/launcher_augmentation.sh
-#   bash routines/preflights/augmentation/slurm/launcher_augmentation.sh path/to/other_config.yaml
-#   bash routines/preflights/augmentation/slurm/launcher_augmentation.sh --dry-run
+#   bash routines/data/encode_latents/slurm/launcher_encode_latents.sh
+#   bash routines/data/encode_latents/slurm/launcher_encode_latents.sh path/to/other_config.yaml
+#   bash routines/data/encode_latents/slurm/launcher_encode_latents.sh --dry-run
 #
-# The default config (configs/picasso.yaml) targets the A100 envelope (256x256x192)
-# and points at the dataset + MAISI paths under /mnt/.../fscratch.
+# Default config (configs/picasso.yaml): A100 envelope, full 2,721 passes (~3 h).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ---- Configurable paths -----------------------------------------------------
 REPO_DIR="${REPO_DIR:-/mnt/home/users/tic_163_uma/mpascual/fscratch/repos/BrainREPA-FM}"
 CONDA_ENV_NAME="${CONDA_ENV_NAME:-brainrepa}"
 LOGS_DIR="${LOGS_DIR:-${HOME}/execs/brainrepa_fm/logs}"
 mkdir -p "${LOGS_DIR}"
 
-# ---- Args -------------------------------------------------------------------
 DRY_RUN=false
 CONFIG_PATH=""
 for arg in "$@"; do
@@ -31,9 +28,8 @@ for arg in "$@"; do
         *) CONFIG_PATH="${arg}" ;;
     esac
 done
-CONFIG_PATH="${CONFIG_PATH:-${REPO_DIR}/routines/preflights/augmentation/configs/picasso.yaml}"
+CONFIG_PATH="${CONFIG_PATH:-${REPO_DIR}/routines/data/encode_latents/configs/picasso.yaml}"
 
-# ---- Pre-submit sanity checks ----------------------------------------------
 echo "[launcher] REPO_DIR    = ${REPO_DIR}"
 echo "[launcher] CONFIG_PATH = ${CONFIG_PATH}"
 echo "[launcher] CONDA_ENV   = ${CONDA_ENV_NAME}"
@@ -46,8 +42,6 @@ for path in "${REPO_DIR}" "${CONFIG_PATH}"; do
     fi
 done
 
-# Extract the source_h5, maisi_checkpoint_path, maisi_config_path from the YAML and verify each.
-# Use python (any conda env with PyYAML works on the login node).
 _validate_yaml_paths() {
     local cfg="$1"
     python - "$cfg" <<'PYEOF'
@@ -60,7 +54,6 @@ missing = []
 for key in ("source_h5", "maisi_checkpoint_path", "maisi_config_path"):
     val = cfg.get(key)
     if val is None:
-        # maisi_* are optional; only flag source_h5 if absent
         if key == "source_h5":
             missing.append(f"{key}: not set in {cfg_path}")
         continue
@@ -76,12 +69,9 @@ PYEOF
 }
 if command -v python >/dev/null 2>&1; then
     _validate_yaml_paths "${CONFIG_PATH}" || exit 1
-else
-    echo "[launcher] WARNING: no python on PATH at launcher time; skipping YAML path validation." >&2
 fi
 
-# ---- Job name with timestamp suffix -----------------------------------------
-JOB_NAME="brainrepa-preflight-aug-$(date -u +%Y%m%dT%H%M%SZ)"
+JOB_NAME="brainrepa-encode-latents-$(date -u +%Y%m%dT%H%M%SZ)"
 
 SBATCH_CMD=(
     sbatch
@@ -90,7 +80,7 @@ SBATCH_CMD=(
     --output="${LOGS_DIR}/${JOB_NAME}_%j.out"
     --error="${LOGS_DIR}/${JOB_NAME}_%j.err"
     --export=ALL,REPO_DIR="${REPO_DIR}",CONFIG_PATH="${CONFIG_PATH}",CONDA_ENV_NAME="${CONDA_ENV_NAME}"
-    "${SCRIPT_DIR}/worker_augmentation.sh"
+    "${SCRIPT_DIR}/worker_encode_latents.sh"
 )
 
 if ${DRY_RUN}; then

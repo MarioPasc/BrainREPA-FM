@@ -92,6 +92,11 @@ class AugmentationRoutineConfig(BaseModel):
     seed: int = 2026
     n_figure_subjects: int = Field(default=2, ge=1, le=4)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    # Optional MAISI overrides — when unset, MaisiVAE falls back to its module-level defaults
+    # (which point at the local workstation paths). Set these explicitly on Picasso / any host
+    # where the checkpoints live elsewhere.
+    maisi_checkpoint_path: Path | None = None
+    maisi_config_path: Path | None = None
 
     @field_validator("source_h5")
     @classmethod
@@ -159,8 +164,19 @@ class AugmentationEngine:
             )
 
             # ---- step 1: instantiate VAE ---------------------------------
-            logger.info("loading MAISI VAE (target_shape=%s)", target_shape)
-            vae = MaisiVAE(device=cfg.device, autocast_fp16=True, use_checkpointing=True)
+            logger.info(
+                "loading MAISI VAE (target_shape=%s, ckpt=%s, cfg=%s)",
+                target_shape,
+                cfg.maisi_checkpoint_path,
+                cfg.maisi_config_path,
+            )
+            vae = MaisiVAE(
+                checkpoint_path=cfg.maisi_checkpoint_path,
+                config_path=cfg.maisi_config_path,
+                device=cfg.device,
+                autocast_fp16=True,
+                use_checkpointing=True,
+            )
 
             # ---- step 2: per-transform per-scan Δ_aug-VAE -----------------
             all_results: list[DeltaResult] = []

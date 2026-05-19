@@ -1,18 +1,14 @@
-# Picasso A100 default for pre-flight 01.
+# Picasso A100 latent encoder.
 # Targets the 256x256x192 envelope -> latent (4, 64, 64, 48).
+# Encodes the full 1,470 + 1,251 = 2,721 passes (~3 h on A100).
 
 source_h5: /mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/inpainting/brats_inpainting_2026.h5
-output_root: /mnt/home/users/tic_163_uma/mpascual/fscratch/repos/BrainREPA-FM/artifacts/preflights/augmentation
-
-n_train_subjects: 50
-n_val_subjects: 219
-stratify_by: tumor_volume_quartile
+output_path: /mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/inpainting/brainrepa_latents.h5
 target_shape: "a100"
+max_subjects: null
 device: cuda
-seed: 2026
-n_figure_subjects: 2
+gzip_level: 4
 log_level: INFO
 
-# MAISI paths on Picasso (override the local-workstation defaults).
 maisi_checkpoint_path: /mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/NV-Generate-MR/models/autoencoder_v2.pt
 maisi_config_path:     /mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/code/NV-Generate-CTMR/configs/config_network_ddpm.json

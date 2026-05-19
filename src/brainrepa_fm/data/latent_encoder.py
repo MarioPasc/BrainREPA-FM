@@ -71,6 +71,9 @@ class LatentEncodeConfig(BaseModel):
     device: str = "cuda"
     gzip_level: int = Field(default=4, ge=0, le=9)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    # Optional MAISI overrides — unset → MaisiVAE's module-level defaults (local-workstation paths).
+    maisi_checkpoint_path: Path | None = None
+    maisi_config_path: Path | None = None
 
     @field_validator("source_h5")
     @classmethod
@@ -103,8 +106,19 @@ class LatentEncoder:
         cfg = self.config
         target_shape = MAISI_PAD_SHAPE_3060 if cfg.target_shape == "3060" else MAISI_PAD_SHAPE
 
-        logger.info("loading MAISI VAE on %s", cfg.device)
-        vae = MaisiVAE(device=cfg.device, autocast_fp16=True, use_checkpointing=True)
+        logger.info(
+            "loading MAISI VAE on %s (ckpt=%s, cfg=%s)",
+            cfg.device,
+            cfg.maisi_checkpoint_path,
+            cfg.maisi_config_path,
+        )
+        vae = MaisiVAE(
+            checkpoint_path=cfg.maisi_checkpoint_path,
+            config_path=cfg.maisi_config_path,
+            device=cfg.device,
+            autocast_fp16=True,
+            use_checkpointing=True,
+        )
 
         # Probe latent shape once.
         latent_c, latent_z, latent_y, latent_x = probe_latent_shape(
