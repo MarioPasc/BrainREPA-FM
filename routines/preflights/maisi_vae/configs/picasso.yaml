@@ -13,4 +13,4 @@ log_level: INFO
 
 # MAISI paths on Picasso (override the local-workstation defaults).
 maisi_checkpoint_path: /mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/NV-Generate-MR/models/autoencoder_v2.pt
-maisi_config_path:     /mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/code/NV-Generate-CTMR/configs/config_network_ddpm.json
+maisi_config_path:     /mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/NV-Generate-MR/configs/config_network_rflow.json
