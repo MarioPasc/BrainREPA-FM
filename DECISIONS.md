@@ -17,6 +17,16 @@ Status updates edit the original entry's status line. Entries are never deleted.
 
 ---
 
+## 2026-05-20 — Pre-flight 03 adds the pixel-space voided-input round-trip (Caveat 2)
+
+**Context:** Pre-flight 03's reconstruction audit round-trips the *intact* volume `gt/t1` (`r(x) = D(E(x))`). `docs/checks/03_maisi_vae_audit.md` §6 Caveat 2 calls the *voided* pixel round-trip `r(x̃)` "uninteresting" and instead prescribes the §7 latent-locality tests (`S_inside` / `S_outside`) to characterise `E(x̃)`. But at inference the proposal conditions the generator on `E(x̃)` and the decoder renders tissue near the void boundary; the §7 latent tests measure encoder locality, not whether the *decoder* faithfully reproduces still-visible tissue when the encoder saw a zero hole. A latent can be local (`S_outside ≈ 0`) yet the decoded visible region still degrade.
+
+**Decision:** Add `compute_voided_roundtrip_metrics` (+ frozen `VoidedRoundtripMetrics`) to `src/brainrepa_fm/preflight/maisi_vae/reconstruction.py`. Per volume the engine decodes `D(E(x̃))` (the voided latent was already encoded for §7) and scores visible-region (`brain ∩ ¬void`, using the H5's own `masks/void`) MSE/PSNR/SSIM against the true signal `x`, alongside the same region scored for `D(E(x))`. The per-volume `delta_psnr_visible_db` (un-voided minus voided) isolates the fidelity lost purely to the input hole. New deliverables: `tables/voided_roundtrip.csv`, `figures/voided_roundtrip_psnr_drop.png`, a report section, and a `decision.json` key `median_voided_visible_psnr_drop_db`.
+
+**Consequences:** Deliberate deviation from §6 Caveat 2's "uninteresting" framing — decoder degradation of visible tissue is a distinct failure mode the latent §7 tests miss, and it matters for the feathered paste-back boundary. The diagnostic is *report-only*: the architecture-path decision (§3.3 / §4) still uses the intact-round-trip inside-void PSNR. `decision.json` gains one additive key; `schema_version` stays `1.0`. One extra decode per volume. Verified on the 2-subject local smoke.
+
+**Status:** accepted
+
 ## 2026-05-20 — Pre-flight 02 cohort restricted to glioma-only 2026 data; meningioma probe dropped
 
 **Context:** `docs/checks/02_bsf_layer_analysis.md` (v2.0) drew its BSF layer-selection cohort from "200 BraTS-Inpainting 2026 + 50 BraTS-MEN" volumes and included a glioma-vs-meningioma linear probe (P3, weight 0.2 in the stage-ranking aggregation). The BraTS-Inpainting 2026 challenge docs (`docs/2026_challenge/`) establish the dataset is glioma-only — every case `BraTS-GLI-*`, derived from BraTS-2023-GLI — and the challenge metric is SSIM/PSNR/MSE inside the void mask, with no pathology-classification component.

@@ -116,7 +116,12 @@ def test_engine_run_writes_all_deliverables(tiny_brats_h5, tmp_path):
 
     assert (out_dir / "report.md").exists()
     assert (out_dir / "decision.json").exists()
-    for name in ("reconstruction_metrics.csv", "latent_stats.csv", "voided_tests.csv"):
+    for name in (
+        "reconstruction_metrics.csv",
+        "latent_stats.csv",
+        "voided_tests.csv",
+        "voided_roundtrip.csv",
+    ):
         assert (out_dir / "tables" / name).exists()
     assert list((out_dir / "figures").glob("*.png"))
 
@@ -130,6 +135,7 @@ def test_engine_run_writes_all_deliverables(tiny_brats_h5, tmp_path):
     assert len(decision["latent_mean"]) == 4
     assert decision["n_volumes_audited"] == 2
     assert decision["target_shape"] == "3060"
+    assert "median_voided_visible_psnr_drop_db" in decision
 
 
 def test_engine_creates_latest_symlink(tiny_brats_h5, tmp_path):
@@ -146,9 +152,7 @@ def test_engine_path3_hard_fails_after_writing_artifacts(tiny_brats_h5, tmp_path
     with patch(_ENGINE_VAE, _fake_factory(noise_std=0.15)):
         with pytest.raises(PreflightError):
             MaisiVaeEngine(cfg).run()
-    stamps = [
-        p for p in cfg.output_root.iterdir() if p.is_dir() and not p.is_symlink()
-    ]
+    stamps = [p for p in cfg.output_root.iterdir() if p.is_dir() and not p.is_symlink()]
     assert stamps, "artifact directory must exist even on hard-fail"
     decision = json.loads((stamps[0] / "decision.json").read_text())
     assert decision["path"] == "3"

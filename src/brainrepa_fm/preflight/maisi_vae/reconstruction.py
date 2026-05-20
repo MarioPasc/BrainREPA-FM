@@ -3,11 +3,13 @@
 Implements ``docs/checks/03_maisi_vae_audit.md`` §2.1 / §3.2: per-volume
 MSE / PSNR / SSIM of the round-trip ``r(x) = D(E(x))`` in four regions — the
 full envelope, the brain mask, J sampled void masks, and the tumor mask.
+:func:`compute_voided_roundtrip_metrics` covers Caveat 2 — the round-trip of
+the *voided* volume ``r(x_tilde) = D(E(x_tilde))``, scoring whether the input
+hole degrades the decoder's rendering of the still-visible tissue.
 
-:func:`compute_reconstruction_metrics` is pure (no VAE, no GPU): it consumes an
-already-decoded reconstruction and returns a frozen :class:`ReconstructionMetrics`.
-The routine engine owns the encode/decode, which keeps the metric maths
-unit-testable without a checkpoint.
+Both functions are pure (no VAE, no GPU): they consume already-decoded
+reconstructions, which keeps the metric maths unit-testable without a
+checkpoint. The routine engine owns the encode/decode.
 """
 
 from __future__ import annotations
@@ -19,7 +21,12 @@ import numpy as np
 
 from brainrepa_fm.common.metrics import mse, psnr, ssim3d_map
 
-__all__ = ["ReconstructionMetrics", "compute_reconstruction_metrics"]
+__all__ = [
+    "ReconstructionMetrics",
+    "VoidedRoundtripMetrics",
+    "compute_reconstruction_metrics",
+    "compute_voided_roundtrip_metrics",
+]
 
 # Percentile (over the J void masks) for the per-volume worst case.
 _WORST_PCT: float = 10.0
@@ -67,6 +74,13 @@ def _agg(reducer: Callable[[np.ndarray], float], values: np.ndarray) -> float:
     """Apply ``reducer`` to the non-NaN entries (``inf`` is kept — a real best case)."""
     keep = values[~np.isnan(values)]
     return float(reducer(keep)) if keep.size else float("nan")
+
+
+def _delta(better: float, worse: float) -> float:
+    """``better - worse`` when both are finite, else ``nan`` (avoids ``inf - inf``)."""
+    if not (np.isfinite(better) and np.isfinite(worse)):
+        return float("nan")
+    return float(better - worse)
 
 
 def compute_reconstruction_metrics(
@@ -126,4 +140,105 @@ def compute_reconstruction_metrics(
         mse_tumor=mse(gt, recon, tumor_b),
         psnr_tumor=psnr(gt, recon, tumor_b),
         ssim_tumor=_ssim_region(smap, tumor_b),
+    )
+
+
+@dataclass(frozen=True)
+class VoidedRoundtripMetrics:
+    """Voided-input round-trip fidelity for one volume (``docs/checks/03`` Caveat 2).
+
+    At inference the generator is conditioned on ``E(x_tilde)`` where ``x_tilde``
+    is the voided volume; this measures whether the zero hole degrades the
+    decoder's rendering of the *still-visible* tissue. The ``visible`` region is
+    ``brain ∩ ¬void`` — voxels present in both ``x`` and ``x_tilde`` (where the
+    two are equal by construction). ``*_visible_voided`` scores
+    ``D(E(x_tilde)))`` there against the true signal ``x``; ``*_visible_unvoided``
+    scores ``D(E(x))`` on the same region, so ``delta_psnr_visible_db``
+    (un-voided minus voided) isolates the fidelity lost purely to the input
+    hole. ``*_full_voided`` scores ``D(E(x_tilde)))`` against ``x_tilde`` over
+    the whole envelope. ``delta_*`` are ``nan`` when either side is non-finite.
+    """
+
+    subject_id: str
+    mse_visible_voided: float
+    psnr_visible_voided: float
+    ssim_visible_voided: float
+    mse_visible_unvoided: float
+    psnr_visible_unvoided: float
+    ssim_visible_unvoided: float
+    delta_psnr_visible_db: float
+    delta_ssim_visible: float
+    mse_full_voided: float
+    psnr_full_voided: float
+    ssim_full_voided: float
+
+
+def compute_voided_roundtrip_metrics(
+    *,
+    subject_id: str,
+    gt: np.ndarray,
+    voided: np.ndarray,
+    recon_unvoided: np.ndarray,
+    recon_voided: np.ndarray,
+    brain_mask: np.ndarray,
+    void_mask: np.ndarray,
+) -> VoidedRoundtripMetrics:
+    """Voided-input round-trip fidelity for one volume; arrays at the VAE envelope.
+
+    Parameters:
+        subject_id: Scan identifier persisted into the result.
+        gt: Intact volume ``x`` ``(X, Y, Z)`` in ``[0, 1]``.
+        voided: Voided volume ``x_tilde`` (zeros inside ``void_mask``), same shape.
+        recon_unvoided: Round-trip ``D(E(x))``, same shape.
+        recon_voided: Round-trip ``D(E(x_tilde))``, same shape.
+        brain_mask: Binary brain mask, same shape.
+        void_mask: The binary void mask that produced ``voided``, same shape.
+
+    Returns:
+        A frozen :class:`VoidedRoundtripMetrics`.
+
+    Raises:
+        ValueError: If any input shape differs from ``gt``.
+    """
+    gt = np.asarray(gt, dtype=np.float64)
+    voided = np.asarray(voided, dtype=np.float64)
+    recon_unvoided = np.asarray(recon_unvoided, dtype=np.float64)
+    recon_voided = np.asarray(recon_voided, dtype=np.float64)
+    for name, arr in (
+        ("voided", voided),
+        ("recon_unvoided", recon_unvoided),
+        ("recon_voided", recon_voided),
+    ):
+        if arr.shape != gt.shape:
+            raise ValueError(f"{name} shape {arr.shape} != gt shape {gt.shape}")
+
+    brain_b = np.asarray(brain_mask).astype(bool)
+    void_b = np.asarray(void_mask).astype(bool)
+    # Visible tissue: in the brain and outside the void — present in both x and x_tilde.
+    visible = brain_b & ~void_b
+
+    # Score both round-trips against the true signal x on the visible region, so
+    # the delta is apples-to-apples; the full-envelope number scores x_tilde as-is.
+    smap_voided = ssim3d_map(gt, recon_voided)
+    smap_unvoided = ssim3d_map(gt, recon_unvoided)
+    smap_full = ssim3d_map(voided, recon_voided)
+
+    psnr_vv = psnr(gt, recon_voided, visible)
+    psnr_vu = psnr(gt, recon_unvoided, visible)
+    ssim_vv = _ssim_region(smap_voided, visible)
+    ssim_vu = _ssim_region(smap_unvoided, visible)
+
+    return VoidedRoundtripMetrics(
+        subject_id=subject_id,
+        mse_visible_voided=mse(gt, recon_voided, visible),
+        psnr_visible_voided=psnr_vv,
+        ssim_visible_voided=ssim_vv,
+        mse_visible_unvoided=mse(gt, recon_unvoided, visible),
+        psnr_visible_unvoided=psnr_vu,
+        ssim_visible_unvoided=ssim_vu,
+        delta_psnr_visible_db=_delta(psnr_vu, psnr_vv),
+        delta_ssim_visible=_delta(ssim_vu, ssim_vv),
+        mse_full_voided=mse(voided, recon_voided),
+        psnr_full_voided=psnr(voided, recon_voided),
+        ssim_full_voided=_ssim_region(smap_full, None),
     )

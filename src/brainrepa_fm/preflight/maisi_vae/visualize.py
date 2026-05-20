@@ -24,6 +24,8 @@ __all__ = [
     "render_psnr_histogram",
     "render_reconstruction_montage",
     "render_ssim_histogram",
+    "render_voided_drop_histogram",
+    "render_voided_roundtrip_montage",
     "render_voided_scatter",
 ]
 
@@ -251,6 +253,104 @@ def render_voided_scatter(
     ax.set_title("§7 voided vs non-voided encoder behaviour")
     ax.grid(alpha=0.3)
     fig.tight_layout()
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+    return Path(out_path)
+
+
+def render_voided_drop_histogram(
+    values: Sequence[float],
+    *,
+    out_path: Path,
+) -> Path:
+    """Histogram of the per-volume visible-region PSNR drop (Caveat 2).
+
+    Parameters:
+        values: Per-volume ``delta_psnr_visible_db`` (un-voided minus voided);
+            non-finite entries are dropped. Positive means voiding hurt fidelity.
+        out_path: PNG destination.
+
+    Returns:
+        ``out_path``.
+    """
+    fig, ax = plt.subplots(figsize=(6, 4))
+    finite = _finite(values)
+    if finite.size:
+        ax.hist(finite, bins=24, color="indianred", edgecolor="black", alpha=0.85)
+        ax.axvline(
+            float(np.median(finite)),
+            color="darkred",
+            lw=1.5,
+            label=f"median {np.median(finite):.3f} dB",
+        )
+        ax.legend(loc="best")
+    ax.axvline(0.0, color="black", lw=1)
+    ax.set_xlabel("visible-region PSNR drop, un-voided minus voided (dB)")
+    ax.set_ylabel("count")
+    ax.set_title("Voided-input round-trip: visible-tissue fidelity loss")
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+    return Path(out_path)
+
+
+def render_voided_roundtrip_montage(
+    *,
+    gt_volume: np.ndarray,
+    voided_volume: np.ndarray,
+    recon_voided: np.ndarray,
+    void_mask: np.ndarray,
+    label: str,
+    out_path: Path,
+) -> Path:
+    """4x3 montage of the voided-input round-trip (``docs/checks/03`` Caveat 2).
+
+    Rows: ground-truth ``x`` / voided input ``x_tilde`` / reconstruction
+    ``D(E(x_tilde))`` / absolute residual vs ``x``. Columns: mid-axial /
+    mid-sagittal / mid-coronal. The void outline is drawn on every panel.
+
+    Parameters:
+        gt_volume: Intact volume ``x`` ``(X, Y, Z)`` in ``[0, 1]``.
+        voided_volume: Voided input ``x_tilde``, same shape.
+        recon_voided: Round-trip ``D(E(x_tilde))``, same shape.
+        void_mask: The void mask that produced ``x_tilde``.
+        label: Caption (e.g. ``"worst_drop"``).
+        out_path: PNG destination.
+
+    Returns:
+        ``out_path``.
+    """
+    gt_volume = np.asarray(gt_volume)
+    voided_volume = np.asarray(voided_volume)
+    recon_voided = np.asarray(recon_voided)
+    void_mask = np.asarray(void_mask)
+    slicers = (_slice_axial, _slice_sagittal, _slice_coronal)
+    titles = ("axial", "sagittal", "coronal")
+    residual = np.abs(recon_voided - gt_volume)
+    vmax = float(np.percentile(residual, 99)) or 1.0
+    rows = (
+        (gt_volume, "x (ground truth)", "gray", 1.0),
+        (voided_volume, "x_tilde (voided input)", "gray", 1.0),
+        (recon_voided, "D(E(x_tilde))", "gray", 1.0),
+        (residual, "|D(E(x_tilde)) - x|", "hot", vmax),
+    )
+
+    fig, axes = plt.subplots(4, 3, figsize=(9, 12))
+    fig.suptitle(f"voided-input round-trip — {label}", fontsize=13)
+    for row, (vol, row_title, cmap, vmax_row) in enumerate(rows):
+        for col, (sl, col_title) in enumerate(zip(slicers, titles, strict=True)):
+            ax = axes[row, col]
+            ax.imshow(sl(vol).T, cmap=cmap, origin="lower", vmin=0, vmax=vmax_row)
+            void_slice = sl(void_mask)
+            if void_slice.any():
+                ax.contour(void_slice.T, levels=[0.5], colors="cyan", linewidths=0.8)
+            ax.set_title(f"{row_title} ({col_title})", fontsize=8)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            if cmap == "hot":
+                ax.set_facecolor("black")
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
     return Path(out_path)

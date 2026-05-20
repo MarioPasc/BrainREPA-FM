@@ -10,7 +10,9 @@ import pytest
 from brainrepa_fm.common.metrics import psnr
 from brainrepa_fm.preflight.maisi_vae.reconstruction import (
     ReconstructionMetrics,
+    VoidedRoundtripMetrics,
     compute_reconstruction_metrics,
+    compute_voided_roundtrip_metrics,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.preflight_maisi]
@@ -101,4 +103,51 @@ def test_shape_mismatch_raises():
             brain_mask=brain,
             tumor_mask=tumor,
             void_masks=[void],
+        )
+
+
+def test_voided_roundtrip_metrics_frozen():
+    m = VoidedRoundtripMetrics("s", *([0.0] * 11))
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        m.subject_id = "x"  # type: ignore[misc]
+
+
+def test_voided_roundtrip_drop_positive_when_voided_worse():
+    """A noisier voided round-trip than the un-voided one yields a positive drop."""
+    rng = np.random.default_rng(3)
+    gt = rng.random((16, 16, 16)).astype(np.float32)
+    brain = np.ones((16, 16, 16), dtype=np.int8)
+    void = np.zeros((16, 16, 16), dtype=np.int8)
+    void[2:8, 2:8, 2:8] = 1
+    voided = gt.copy()
+    voided[void.astype(bool)] = 0.0
+    recon_unvoided = np.clip(gt + rng.normal(0, 0.02, gt.shape), 0, 1).astype(np.float32)
+    recon_voided = np.clip(gt + rng.normal(0, 0.10, gt.shape), 0, 1).astype(np.float32)
+    res = compute_voided_roundtrip_metrics(
+        subject_id="s",
+        gt=gt,
+        voided=voided,
+        recon_unvoided=recon_unvoided,
+        recon_voided=recon_voided,
+        brain_mask=brain,
+        void_mask=void,
+    )
+    assert np.isfinite(res.delta_psnr_visible_db)
+    assert res.delta_psnr_visible_db > 0.0
+    assert res.psnr_visible_unvoided > res.psnr_visible_voided
+
+
+def test_voided_roundtrip_shape_mismatch_raises():
+    gt = np.zeros((16, 16, 16), dtype=np.float32)
+    ones = np.ones((16, 16, 16), dtype=np.int8)
+    zeros = np.zeros((16, 16, 16), dtype=np.int8)
+    with pytest.raises(ValueError):
+        compute_voided_roundtrip_metrics(
+            subject_id="s",
+            gt=gt,
+            voided=np.zeros((8, 8, 8), dtype=np.float32),
+            recon_unvoided=gt,
+            recon_voided=gt,
+            brain_mask=ones,
+            void_mask=zeros,
         )

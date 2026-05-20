@@ -6,8 +6,9 @@ through the frozen MAISI-V2 VAE, and writes the artifact bundle:
 
 ``artifacts/preflights/maisi_vae/<UTC>/``
     ├── report.md
-    ├── figures/{psnr_hist_*,ssim_hist_*,montage_*,latent_statistics,voided_tests_scatter}.png
-    ├── tables/{reconstruction_metrics,latent_stats,voided_tests}.csv
+    ├── figures/{psnr_hist_*,ssim_hist_*,montage_*,latent_statistics,
+    │            voided_tests_scatter,voided_roundtrip_psnr_drop}.png
+    ├── tables/{reconstruction_metrics,latent_stats,voided_tests,voided_roundtrip}.csv
     └── decision.json
 
 Scope follows ``docs/checks/03_maisi_vae_audit.md`` §2.1 / §3 / §4 (reconstruction)
@@ -53,13 +54,17 @@ from brainrepa_fm.preflight.maisi_vae.latent_stats import (
 from brainrepa_fm.preflight.maisi_vae.preprocess import prepare_to_envelope
 from brainrepa_fm.preflight.maisi_vae.reconstruction import (
     ReconstructionMetrics,
+    VoidedRoundtripMetrics,
     compute_reconstruction_metrics,
+    compute_voided_roundtrip_metrics,
 )
 from brainrepa_fm.preflight.maisi_vae.visualize import (
     render_latent_stats_figure,
     render_psnr_histogram,
     render_reconstruction_montage,
     render_ssim_histogram,
+    render_voided_drop_histogram,
+    render_voided_roundtrip_montage,
     render_voided_scatter,
 )
 from brainrepa_fm.preflight.maisi_vae.voided_tests import (
@@ -175,13 +180,12 @@ class MaisiVaeEngine:
             latent_shape = probe_latent_shape(vae, input_shape=target_shape, device=cfg.device)
             latent_channels = latent_shape[0]
             latent_grid = latent_shape[1:]
-            logger.info(
-                "VAE sha256[:16]=%s, latent shape=%s", vae.info.sha256_prefix, latent_shape
-            )
+            logger.info("VAE sha256[:16]=%s, latent shape=%s", vae.info.sha256_prefix, latent_shape)
 
             # ---- step 2: per-volume single-encode audit -------------------
             recon_metrics: list[ReconstructionMetrics] = []
             voided_results: list[VoidedTestResult] = []
+            voided_rt_metrics: list[VoidedRoundtripMetrics] = []
             latent_acc = LatentStatsAccumulator(latent_channels)
 
             for pos, scan_idx in enumerate(cohort):
@@ -191,6 +195,9 @@ class MaisiVaeEngine:
                 voided = prepare_to_envelope(f["images/t1_voided"][scan_idx], target_shape)
                 brain = prepare_to_envelope(f["masks/brain"][scan_idx], target_shape)
                 tumor = prepare_to_envelope(f["gt/tumor_mask"][gt_local], target_shape)
+                # The H5's own void mask (the one that produced images/t1_voided),
+                # distinct from the J freshly-sampled void_masks below.
+                hvoid = prepare_to_envelope(f["masks/void"][scan_idx], target_shape)
 
                 void_masks = [
                     sample_void_mask(
@@ -217,8 +224,10 @@ class MaisiVaeEngine:
                 )
                 latent_acc.update(z_gt)
 
-                # §7 voided-encoder behaviour — one extra encode of the voided volume.
+                # §7 voided-encoder behaviour + Caveat 2 voided round-trip —
+                # one extra encode + decode of the voided volume.
                 z_void = vae.encode(volume_to_tensor(voided, device=cfg.device))
+                recon_voided = tensor_to_volume(vae.decode(z_void).float())
                 latent_void_masks = [
                     downsample_mask_to_latent(vm, latent_grid) for vm in void_masks
                 ]
@@ -228,6 +237,17 @@ class MaisiVaeEngine:
                         z_gt=z_gt,
                         z_voided=z_void,
                         latent_void_masks=latent_void_masks,
+                    )
+                )
+                voided_rt_metrics.append(
+                    compute_voided_roundtrip_metrics(
+                        subject_id=sid,
+                        gt=gt,
+                        voided=voided,
+                        recon_unvoided=recon,
+                        recon_voided=recon_voided,
+                        brain_mask=brain,
+                        void_mask=hvoid,
                     )
                 )
 
@@ -244,18 +264,39 @@ class MaisiVaeEngine:
 
             # ---- step 3: decision rule ------------------------------------
             decision = self._decide(
-                recon_metrics, latent_stats, vae=vae, cfg=cfg, git_sha=git_sha, ts=ts
+                recon_metrics,
+                voided_rt_metrics,
+                latent_stats,
+                vae=vae,
+                cfg=cfg,
+                git_sha=git_sha,
+                ts=ts,
             )
 
             # ---- step 4: write artifact bundle ----------------------------
             montages = self._collect_montage_volumes(
                 vae, f, recon_metrics, cohort, global_to_gt, target_shape, cfg
             )
+            voided_montages = self._collect_voided_montages(
+                vae, f, voided_rt_metrics, cohort, global_to_gt, target_shape, cfg
+            )
 
-        self._write_tables(tables_dir, recon_metrics, voided_results, latent_stats)
-        self._write_figures(figures_dir, recon_metrics, voided_results, latent_stats, montages)
+        self._write_tables(
+            tables_dir, recon_metrics, voided_results, voided_rt_metrics, latent_stats
+        )
+        self._write_figures(
+            figures_dir,
+            recon_metrics,
+            voided_results,
+            voided_rt_metrics,
+            latent_stats,
+            montages,
+            voided_montages,
+        )
         (out_dir / "decision.json").write_text(json.dumps(decision, indent=2, sort_keys=True))
-        self._write_report(out_dir, recon_metrics, voided_results, latent_stats, decision)
+        self._write_report(
+            out_dir, recon_metrics, voided_results, voided_rt_metrics, latent_stats, decision
+        )
         self._update_latest_symlink(cfg.output_root, ts)
 
         # ---- step 5: validate-on-close --------------------------------
@@ -271,7 +312,9 @@ class MaisiVaeEngine:
             logger.error("%s", msg)
             raise PreflightError(msg)
 
-        logger.info("decision.json written: %s (path=%s)", out_dir / "decision.json", decision["path"])
+        logger.info(
+            "decision.json written: %s (path=%s)", out_dir / "decision.json", decision["path"]
+        )
         return out_dir
 
     # -- helpers ----------------------------------------------------------
@@ -282,9 +325,7 @@ class MaisiVaeEngine:
             f["splits/train"][...].astype(int) if "splits/train" in f else np.array([], dtype=int)
         )
         gt_idx = (
-            f["gt/scan_index"][...].astype(int)
-            if "gt/scan_index" in f
-            else np.array([], dtype=int)
+            f["gt/scan_index"][...].astype(int) if "gt/scan_index" in f else np.array([], dtype=int)
         )
         cohort_all = sorted(set(int(i) for i in train_idx) & set(int(i) for i in gt_idx))
         if not cohort_all:
@@ -299,6 +340,7 @@ class MaisiVaeEngine:
     def _decide(
         self,
         recon_metrics: list[ReconstructionMetrics],
+        voided_rt_metrics: list[VoidedRoundtripMetrics],
         latent_stats: LatentChannelStats,
         *,
         vae: MaisiVAE,
@@ -318,6 +360,10 @@ class MaisiVaeEngine:
         median_full = median("psnr_full")
         median_tumor = median("psnr_tumor")
         tumor_gap = median_brain - median_tumor
+
+        drop_vals = np.array([m.delta_psnr_visible_db for m in voided_rt_metrics], dtype=np.float64)
+        drop_finite = drop_vals[~np.isnan(drop_vals)]
+        median_voided_drop = float(np.median(drop_finite)) if drop_finite.size else float("nan")
 
         if median_void >= PSNR_PATH1_DB:
             path, fine_tune, ft_target = "1", False, "none"
@@ -346,6 +392,7 @@ class MaisiVaeEngine:
             "median_tumor_psnr_db": _json_num(median_tumor),
             "tumor_vs_brain_gap_db": _json_num(tumor_gap),
             "investigate_tumor_gap": investigate,
+            "median_voided_visible_psnr_drop_db": _json_num(median_voided_drop),
             "n_volumes_audited": len(recon_metrics),
             "target_shape": cfg.target_shape,
             "vae_sha256_prefix": vae.info.sha256_prefix,
@@ -392,11 +439,48 @@ class MaisiVaeEngine:
                 torch.cuda.empty_cache()
         return out
 
+    def _collect_voided_montages(
+        self,
+        vae: MaisiVAE,
+        f: h5py.File,
+        voided_rt_metrics: list[VoidedRoundtripMetrics],
+        cohort: list[int],
+        global_to_gt: dict[int, int],
+        target_shape: tuple[int, int, int],
+        cfg: MaisiVaeRoutineConfig,
+    ) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+        """Re-encode 3 volumes (least / median / worst visible-PSNR drop) for voided montages."""
+        drops = np.array([m.delta_psnr_visible_db for m in voided_rt_metrics], dtype=np.float64)
+        finite = np.where(~np.isnan(drops))[0]
+        if finite.size == 0:
+            finite = np.arange(len(voided_rt_metrics))
+        order = finite[np.argsort(drops[finite])]  # ascending visible-PSNR drop
+        chosen = {
+            "least_drop": int(order[0]),
+            "median_drop": int(order[order.size // 2]),
+            "worst_drop": int(order[-1]),
+        }
+        out: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+        for label, k in chosen.items():
+            scan_idx = cohort[k]
+            gt_local = global_to_gt[scan_idx]
+            gt = prepare_to_envelope(f["gt/t1"][gt_local], target_shape)
+            voided = prepare_to_envelope(f["images/t1_voided"][scan_idx], target_shape)
+            hvoid = prepare_to_envelope(f["masks/void"][scan_idx], target_shape)
+            z = vae.encode(volume_to_tensor(voided, device=cfg.device))
+            recon_voided = tensor_to_volume(vae.decode(z).float())
+            out[label] = (gt, voided, recon_voided, hvoid)
+            del z
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        return out
+
     def _write_tables(
         self,
         tables_dir: Path,
         recon_metrics: list[ReconstructionMetrics],
         voided_results: list[VoidedTestResult],
+        voided_rt_metrics: list[VoidedRoundtripMetrics],
         latent_stats: LatentChannelStats,
     ) -> None:
         recon_cols = [fld.name for fld in fields(ReconstructionMetrics)]
@@ -415,6 +499,14 @@ class MaisiVaeEngine:
                 d = asdict(r)
                 writer.writerow([_csv_cell(d[c]) for c in void_cols])
 
+        vrt_cols = [fld.name for fld in fields(VoidedRoundtripMetrics)]
+        with (tables_dir / "voided_roundtrip.csv").open("w", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(vrt_cols)
+            for m in voided_rt_metrics:
+                d = asdict(m)
+                writer.writerow([_csv_cell(d[c]) for c in vrt_cols])
+
         with (tables_dir / "latent_stats.csv").open("w", newline="") as fh:
             writer = csv.writer(fh)
             writer.writerow(["channel", "mean", "std"])
@@ -426,8 +518,10 @@ class MaisiVaeEngine:
         figures_dir: Path,
         recon_metrics: list[ReconstructionMetrics],
         voided_results: list[VoidedTestResult],
+        voided_rt_metrics: list[VoidedRoundtripMetrics],
         latent_stats: LatentChannelStats,
         montages: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]],
+        voided_montages: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
     ) -> None:
         psnr_panels = (
             ("psnr_hist_full.png", "full volume", "psnr_full", None),
@@ -464,6 +558,16 @@ class MaisiVaeEngine:
                 out_path=figures_dir / f"montage_{label}.png",
             )
 
+        for label, (gt, voided, recon_voided, void_mask) in voided_montages.items():
+            render_voided_roundtrip_montage(
+                gt_volume=gt,
+                voided_volume=voided,
+                recon_voided=recon_voided,
+                void_mask=void_mask,
+                label=label,
+                out_path=figures_dir / f"montage_voided_{label}.png",
+            )
+
         render_latent_stats_figure(
             latent_stats.mean, latent_stats.std, out_path=figures_dir / "latent_statistics.png"
         )
@@ -472,12 +576,17 @@ class MaisiVaeEngine:
             [r.s_outside_mean for r in voided_results],
             out_path=figures_dir / "voided_tests_scatter.png",
         )
+        render_voided_drop_histogram(
+            [m.delta_psnr_visible_db for m in voided_rt_metrics],
+            out_path=figures_dir / "voided_roundtrip_psnr_drop.png",
+        )
 
     def _write_report(
         self,
         out_dir: Path,
         recon_metrics: list[ReconstructionMetrics],
         voided_results: list[VoidedTestResult],
+        voided_rt_metrics: list[VoidedRoundtripMetrics],
         latent_stats: LatentChannelStats,
         decision: dict[str, object],
     ) -> None:
@@ -513,13 +622,15 @@ class MaisiVaeEngine:
 
         s_in = _summary([r.s_inside_mean for r in voided_results])
         s_out = _summary([r.s_outside_mean for r in voided_results])
+        vrt_drop = _summary([m.delta_psnr_visible_db for m in voided_rt_metrics])
+        vrt_voided = _summary([m.psnr_visible_voided for m in voided_rt_metrics])
+        vrt_unvoided = _summary([m.psnr_visible_unvoided for m in voided_rt_metrics])
         lines.extend(
             [
                 "",
                 "## Decision",
                 "",
-                f"- **path**: {decision['path']} "
-                "(1 = frozen VAE, 2 = VAE fine-tune, 3 = wavelet)",
+                f"- **path**: {decision['path']} (1 = frozen VAE, 2 = VAE fine-tune, 3 = wavelet)",
                 f"- **vae_fine_tune**: {decision['vae_fine_tune']} "
                 f"(target: {decision['fine_tune_target']})",
                 f"- **median inside-void PSNR**: {decision['median_inside_void_psnr_db']} dB "
@@ -528,6 +639,8 @@ class MaisiVaeEngine:
                 f"<{PSNR_CONTINGENCY_DB} → Path 3)",
                 f"- **tumor vs brain PSNR gap**: {decision['tumor_vs_brain_gap_db']} dB "
                 f"(investigate if > {TUMOR_GAP_FLAG_DB}: {decision['investigate_tumor_gap']})",
+                f"- **voided-input visible-region PSNR drop**: "
+                f"{decision['median_voided_visible_psnr_drop_db']} dB (median over volumes)",
                 f"- **latent_aug_safe**: {decision['latent_aug_safe']} "
                 "(empty — equivariance audit deferred)",
                 "",
@@ -552,6 +665,16 @@ class MaisiVaeEngine:
                 f"- S_outside (want ≈ 0):   median {s_out['median']:.4e}, "
                 f"p10 {s_out['p10']:.4e}, p90 {s_out['p90']:.4e}",
                 "",
+                "## Voided-input round-trip (Caveat 2)",
+                "",
+                "Visible-region (brain minus void) round-trip fidelity when the VAE "
+                "encodes the voided volume vs the intact volume:",
+                "",
+                f"- visible PSNR, un-voided input: median {vrt_unvoided['median']:.2f} dB",
+                f"- visible PSNR, voided input:    median {vrt_voided['median']:.2f} dB",
+                f"- PSNR drop (un-voided minus voided): median {vrt_drop['median']:.3f} dB "
+                f"(p10 {vrt_drop['p10']:.3f}, p90 {vrt_drop['p90']:.3f})",
+                "",
                 "## Figures",
                 "",
             ]
@@ -567,6 +690,9 @@ class MaisiVaeEngine:
                 "the architectural ceiling on inside-void leaderboard metrics.",
                 "- H5 volumes are pre-normalized to [0, 1] by the converter; no renormalization "
                 "is applied here (deviation from §3.1 — see DECISIONS.md).",
+                "- The voided-input round-trip (Caveat 2) scores D(E(x_tilde)) on the "
+                "visible region; the architecture-path decision still uses only the "
+                "intact round-trip.",
                 "- Equivariance audit (§2.2, §3.4-3.7) is out of scope for this routine version.",
             ]
         )
@@ -580,6 +706,7 @@ class MaisiVaeEngine:
             tables_dir / "reconstruction_metrics.csv",
             tables_dir / "latent_stats.csv",
             tables_dir / "voided_tests.csv",
+            tables_dir / "voided_roundtrip.csv",
         ]
         missing = [str(p) for p in required if not p.exists()]
         if missing:
@@ -640,7 +767,12 @@ def _summary(values: list[float]) -> dict[str, float]:
     arr = np.asarray(values, dtype=np.float64)
     finite = arr[np.isfinite(arr)]
     if finite.size == 0:
-        return {"mean": float("nan"), "median": float("nan"), "p10": float("nan"), "p90": float("nan")}
+        return {
+            "mean": float("nan"),
+            "median": float("nan"),
+            "p10": float("nan"),
+            "p90": float("nan"),
+        }
     return {
         "mean": float(finite.mean()),
         "median": float(np.median(finite)),

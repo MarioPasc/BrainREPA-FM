@@ -18,7 +18,9 @@ from brainrepa_fm.preflight.maisi_vae.latent_stats import (
 from brainrepa_fm.preflight.maisi_vae.preprocess import prepare_to_envelope
 from brainrepa_fm.preflight.maisi_vae.reconstruction import (
     ReconstructionMetrics,
+    VoidedRoundtripMetrics,
     compute_reconstruction_metrics,
+    compute_voided_roundtrip_metrics,
 )
 from brainrepa_fm.preflight.maisi_vae.voided_tests import (
     VoidedTestResult,
@@ -30,8 +32,10 @@ __all__ = [
     "LatentChannelStats",
     "LatentStatsAccumulator",
     "ReconstructionMetrics",
+    "VoidedRoundtripMetrics",
     "VoidedTestResult",
     "compute_reconstruction_metrics",
+    "compute_voided_roundtrip_metrics",
     "compute_voided_tests_from_latents",
     "downsample_mask_to_latent",
     "prepare_to_envelope",
