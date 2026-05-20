@@ -1,0 +1,12 @@
+# Default pre-flight 03 config — 50 training subjects with GT, 3060/4060 envelope.
+# Local run; the 8 GB / 12 GB envelope is memory-constrained, so results are
+# indicative only. The conclusive run uses configs/picasso.yaml on an A100.
+source_h5: /media/mpascual/MeningD2/INPAINTING/2026/h5/brats_inpainting_2026.h5
+output_root: artifacts/preflights/maisi_vae
+n_subjects: 50
+target_shape: "3060"
+n_void_masks_per_volume: 10
+void_seed: 2026
+seed: 2026
+device: cuda
+log_level: INFO

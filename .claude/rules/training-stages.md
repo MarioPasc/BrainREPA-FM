@@ -43,7 +43,7 @@ Each stage maps to one routine under `routines/<name>/`, following the pattern i
 |---|---|---|---|
 | pre | `routines/preflights/maisi_vae` | Proposal §03 — VAE audit (highest-priority gate) | path ∈ {1,2,3} decision |
 | pre | `routines/preflights/augmentation` | Proposal §01 — VAE composability + KS audit | accept set of 7-8 transforms |
-| pre | `routines/preflights/bsf_layers` | Proposal §02 — REPA target ℓ* selection | ℓ* ∈ {2, 3} |
+| pre | `routines/preflights/bsf_layers` | Proposal §02 — BSF feasibility + REPA target ℓ* selection | `feasible` + ℓ* ∈ {1,2,3} |
 | 1-2 | `routines/baseline_unet` | Reproduce Zhang 2024 U-Net | SSIM ≥ 0.84, PSNR ≈ 23 dB |
 | 3-4 | `routines/fm_baseline` | Latent FM only (no BSF, no L_pix) | Isolates FM contribution |
 | 5-6 | `routines/fm_repa` | Add L_REPA; sweep λ_REPA ∈ {0.25, 0.5, 1.0} | Best ℓ*-λ trade-off |
@@ -56,7 +56,7 @@ Each stage maps to one routine under `routines/<name>/`, following the pattern i
 
 ## Dependency rules
 
-1. **Pre-flights gate all FM/REPA work.** `fm_baseline` and downstream routines refuse to start if any of the three pre-flight `decision.json` files is missing or carries a hard-fail flag (e.g. `ks_hard_fail: true`, `path == "3"` without explicit Path-3 routing).
+1. **Pre-flights gate all FM/REPA work.** `fm_baseline` and downstream routines refuse to start if any of the three pre-flight `decision.json` files is missing or carries a hard-fail flag (e.g. `ks_hard_fail: true`, `feasible == false` for BSF, `path == "3"` without explicit Path-3 routing).
 2. **Wk 1-2 can run in parallel to pre-flights.** `baseline_unet` reproduces Zhang 2024 directly in pixel space; it does not depend on MAISI, BSF, or the latent path.
 3. **One Wk N routine per directory.** Variants (e.g. `λ_REPA = 0.5` vs `λ_REPA = 1.0`) are separate YAML configs under the same routine — `routines/fm_repa/configs/lambda_0_5.yaml`, `lambda_1_0.yaml`. Not separate routines.
 4. **Ablation table is built from `final_ablations`.** Each row corresponds to one YAML config under `routines/final_ablations/configs/`. The seven baselines listed in the proposal (Zhang U-Net reproduced, Latent FM only, FM+REPA, Full system, Full REPA-off, BSF→random SwinUNETR, BSF→DINOv2) are the minimum set.

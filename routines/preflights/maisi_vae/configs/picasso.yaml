@@ -1,0 +1,16 @@
+# Picasso A100 config for pre-flight 03 — all training volumes with GT.
+# Targets the 256x256x192 envelope -> latent (4, 64, 64, 48).
+source_h5: /mnt/home/users/tic_163_uma/mpascual/fscratch/datasets/inpainting/brats_inpainting_2026.h5
+output_root: /mnt/home/users/tic_163_uma/mpascual/fscratch/repos/BrainREPA-FM/artifacts/preflights/maisi_vae
+
+n_subjects: null            # null -> audit every training volume with ground truth
+target_shape: "a100"
+n_void_masks_per_volume: 10
+void_seed: 2026
+seed: 2026
+device: cuda
+log_level: INFO
+
+# MAISI paths on Picasso (override the local-workstation defaults).
+maisi_checkpoint_path: /mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/NV-Generate-MR/models/autoencoder_v2.pt
+maisi_config_path:     /mnt/home/users/tic_163_uma/mpascual/fscratch/checkpoints/code/NV-Generate-CTMR/configs/config_network_ddpm.json

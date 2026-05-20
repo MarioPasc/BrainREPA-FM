@@ -1,0 +1,11 @@
+# Smoke config: 4 training subjects, runs end-to-end in < 5 min on the RTX 3060/4060.
+# Build /tmp/brats_smoke.h5 first (4-volume Schema-A subset).
+source_h5: /tmp/brats_smoke.h5
+output_root: /tmp/brainrepa_maisi_vae_smoke
+n_subjects: 4
+target_shape: "3060"
+n_void_masks_per_volume: 2
+void_seed: 0
+seed: 0
+device: cuda
+log_level: INFO

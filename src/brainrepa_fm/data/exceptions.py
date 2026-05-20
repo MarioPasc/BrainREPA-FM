@@ -25,3 +25,10 @@ class ConverterError(Exception):
 
 class PreflightError(Exception):
     """Raised by pre-flight routines when a hard-fail gate trips."""
+
+
+class MaisiAuditError(Exception):
+    """Raised by the MAISI VAE audit (pre-flight 03) when an invariant is
+    violated — e.g. an empty cohort, an all-NaN metric column, or a missing
+    deliverable at validate-on-close. Distinct from :class:`PreflightError`,
+    which signals a *decided* hard-fail gate (Path 3)."""

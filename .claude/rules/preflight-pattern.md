@@ -78,16 +78,29 @@ Drives the architecture-path decision: Path 1 frozen VAE / Path 1 + fine-tune / 
 ### `preflights/bsf_layers` (proposal §02)
 ```json
 {
-  "schema_version": "1.0",
-  "ell_star": 2,
-  "adaptation_mode": "discard_t2|average",
+  "schema_version": "2.0",
+  "feasible": true,
+  "ell_star": 1,
+  "ell_runner_up": 2,
+  "candidate_stages": [0, 1, 2, 3, 4],
+  "stage_shape_at_ell_star": {"channels": 96, "grid": [24, 24, 24]},
   "cknna_y2_at_ell_star": 0.13,
-  "linear_probe_r2_p1": 0.71,
-  "auc_p3": 0.84,
-  "checkpoint_path": "/abs/path/to/bsf_s_t1_discard_t2.pth"
+  "cknna_y2_null_p95": 0.04,
+  "token_probe_p1_r2": 0.71,
+  "ssl_recon_psnr_db": 31.2,
+  "resample_mode": "trilinear",
+  "checkpoint_path": "/abs/path/to/64-gpu-model_bestValRMSE.pt",
+  "checkpoint_sha256": "<sha256>",
+  "checkpoint_in_channels": 1,
+  "checkpoint_global_step": 75
 }
 ```
-Selects the BSF REPA target stage and T1-only adaptation mode.
+Selects the BSF REPA target stage. `ell_star` indexes the five `swinViT.forward()`
+outputs, `ell ∈ {0,…,4}` (0 = patch-embed, 4 = bottleneck). No T1 adaptation key:
+the released BSF-S checkpoint is natively single-channel (`in_channels = 1`).
+`feasible == false` is a hard fail — BSF is not a usable REPA encoder and the
+project routes to a fallback. Schema bumped to `2.0`: the `1.0` `adaptation_mode`
+key is dropped and `ell_star` is re-indexed `0-4` (was `1-4`).
 
 ### `preflights/augmentation` (proposal §01)
 ```json
@@ -107,7 +120,7 @@ A downstream consumer never reads `report.md` programmatically. It loads `decisi
 
 ## Hard rules
 
-- **Pre-flights are gating.** A training routine for Wk 3+ must, at startup, load each pre-flight's `decision.json` and assert the conditions it depends on (e.g. `path == "1"` for the frozen-VAE branch, `ell_star in {2,3}` for the BSF REPA target). If a pre-flight has not run, the routine fails fast with a clear message naming the missing artifact.
+- **Pre-flights are gating.** A training routine for Wk 3+ must, at startup, load each pre-flight's `decision.json` and assert the conditions it depends on (e.g. `path == "1"` for the frozen-VAE branch, `feasible == true` and `ell_star in {1,2,3}` for the BSF REPA target). If a pre-flight has not run, the routine fails fast with a clear message naming the missing artifact.
 - **Pre-flight outputs are immutable once written.** A re-run produces a new timestamped directory under `artifacts/<routine>/`. Never overwrite.
 - **Latest pointer.** `artifacts/<routine>/LATEST` is a symlink to the most-recent timestamped directory. Consumers default to following the symlink and can be pinned to a specific timestamp via the YAML config (`preflight_artifact_path: artifacts/preflights/maisi_vae/2026-05-20T14-32-00Z/`).
 
