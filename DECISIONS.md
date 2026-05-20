@@ -17,6 +17,16 @@ Status updates edit the original entry's status line. Entries are never deleted.
 
 ---
 
+## 2026-05-20 — REPA target is the per-sample ground truth; tumour tokens masked from L_REPA
+
+**Context:** Two REPA design points the `fm_repa` (Week 5–6) training loop must implement correctly were clarified. (i) A proposal to align REPA against an aggregate / cohort-averaged BSF feature, or against BSF of tumour-erased volumes, to obtain a "robust non-tumour" target. (ii) How the tumour region of the ground truth interacts with the REPA loss, given the BraTS-inpainting train/inference asymmetry — training voids only `mask-healthy` (`gt/healthy_mask`) with the tumour visible as context, while inference also voids the tumour.
+
+**Decision:** REPA is a training-only auxiliary loss; at inference BSF and the projector `h_phi` are discarded. The alignment target is, per training sample, that sample's own `BSF(gt/t1)` — **not** an aggregate, atlas-averaged, or cohort-pooled feature: a shared target erases patient-specific anatomy and collapses the generator toward a mean brain, and BSF is itself the population aggregate (the ~43k-subject prior lives in its frozen weights, so `BSF(x)` is that prior evaluated on patient `x`). BSF is applied to the **intact** GT, never to a tumour-voided volume (a zero hole is out-of-distribution for the encoder and contaminates surrounding features). To keep the healthy-anatomy prior undiluted, `L_REPA` is computed over **non-tumour tokens only** — generator/BSF tokens overlapping the dilated tumour mask (`gt/tumor_mask`, resampled to the generator token grid) are masked out of the per-token cosine; this is a per-sample, per-token mask that preserves REPA's correspondence. The generator is never supervised to *remove* a tumour — it learns healthy-void in-filling, and inference pre-voids the tumour so that skill applies.
+
+**Consequences:** Recorded in `docs/proposal.md` §3.2 and `docs/checks/02_bsf_layer_analysis.md` (§1.1 "How REPA is consumed", §5 "Tumour tokens in the REPA loss"). The `fm_repa` routine implements `L_REPA` with a tumour-token mask derived from `gt/tumor_mask`; the final on/off of the mask is confirmed in the Week 5–6 λ_REPA sweep. The aggregate-feature and tumour-voided-encoding alternatives are rejected. No `decision.json` schema change.
+
+**Status:** accepted
+
 ## 2026-05-20 — Pre-flight 03 adds the pixel-space voided-input round-trip (Caveat 2)
 
 **Context:** Pre-flight 03's reconstruction audit round-trips the *intact* volume `gt/t1` (`r(x) = D(E(x))`). `docs/checks/03_maisi_vae_audit.md` §6 Caveat 2 calls the *voided* pixel round-trip `r(x̃)` "uninteresting" and instead prescribes the §7 latent-locality tests (`S_inside` / `S_outside`) to characterise `E(x̃)`. But at inference the proposal conditions the generator on `E(x̃)` and the decoder renders tissue near the void boundary; the §7 latent tests measure encoder locality, not whether the *decoder* faithfully reproduces still-visible tissue when the encoder saw a zero hole. A latent can be local (`S_outside ≈ 0`) yet the decoded visible region still degrade.
